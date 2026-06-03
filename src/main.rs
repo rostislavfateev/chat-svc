@@ -99,78 +99,77 @@ impl Peer {
 
         Ok(Peer { lines, rx })
     }
-
-    /// Process individual client
-    async fn process(state: Arc<Mutex<Shared>>,
-                     stream: TcpStream,
-                     addr: SocketAddr) -> Result<()> {
-        let mut lines = Framed::new(stream, LinesCodec::new());
-
-        lines.send("Enter your username:").await?;
-
-        let Some(Ok(username)) = lines.next().await else {
-            tracing::error!("Failed to get username from {addr} - client disconnected.");
-
-            return Ok(());
-        };
-
-        let mut peer = Peer::new(state.clone(), lines).await?;
-
-        // Client has connected - notify everybody.
-        {
-            let mut state = state.lock().await;
-            let msg = format!("{username} has joined the chat");
-
-            tracing::info!("{msg}");
-
-            state.broadcast(addr, &msg).await;
-        }
-
-        // Process messages until stream is exhausted
-        loop {
-            tokio::select! {
-                // message was received from a peer, send it to current user.
-                Some(msg) = peer.rx.recv() => {
-                    if let Err(e) = peer.lines.send(&msg).await {
-                        tracing::error!("Failed to send message <{msg}> to {username}: {e:?}");
-                        break;
-            
-                    }
-                }
-                // message received from the current user, broadcast to peers
-                result = peer.lines.next() => match result {
-                    Some(Ok(msg)) => {
-                        let mut state = state.lock().await;
-                        let msg = format!("{username}: {msg}");
-
-                        state.broadcast(addr, &msg).await;
-                    }
-                    Some(Err(e)) => {
-                        tracing::error!("Failed to process message for {username}: {e:?}");
-                        break;
-                    }
-                    // Stream is exhausted
-                    None => break
-                }
-            }
-        }
-
-        // Client disconnected
-        {
-            let mut state = state.lock().await;
-            state.peers.remove(&addr);
-
-            let msg = format!("{username} has left the chat");
-
-            tracing::info!("{msg}");
-
-            state.broadcast(addr, &msg).await;
-        }
-
-        Ok(())
-    }
 }
 
+/// Process individual client
+async fn process(state: Arc<Mutex<Shared>>,
+                 stream: TcpStream,
+                 addr: SocketAddr) -> Result<()> {
+    let mut lines = Framed::new(stream, LinesCodec::new());
+
+    lines.send("Enter your username:").await?;
+
+    let Some(Ok(username)) = lines.next().await else {
+        tracing::error!("Failed to get username from {addr} - client disconnected.");
+
+        return Ok(());
+    };
+
+    let mut peer = Peer::new(state.clone(), lines).await?;
+
+    // Client has connected - notify everybody.
+    {
+        let mut state = state.lock().await;
+        let msg = format!("{username} has joined the chat");
+
+        tracing::info!("{msg}");
+
+        state.broadcast(addr, &msg).await;
+    }
+
+    // Process messages until stream is exhausted
+    loop {
+        tokio::select! {
+            // message was received from a peer, send it to current user.
+            Some(msg) = peer.rx.recv() => {
+                if let Err(e) = peer.lines.send(&msg).await {
+                    tracing::error!("Failed to send message <{msg}> to {username}: {e:?}");
+                    break;
+                }
+            }
+
+            // message received from the current user, broadcast to peers
+            result = peer.lines.next() => match result {
+                Some(Ok(msg)) => {
+                    let mut state = state.lock().await;
+                    let msg = format!("{username}: {msg}");
+
+                    state.broadcast(addr, &msg).await;
+                }
+                Some(Err(e)) => {
+                    tracing::error!("Failed to process message for {username}: {e:?}");
+                    break;
+                }
+                // Stream is exhausted
+                None => break,
+            },
+        }
+    }
+
+    // Client disconnected
+    {
+        let mut state = state.lock().await;
+        state.peers.remove(&addr);
+
+        let msg = format!("{username} has left the chat");
+
+        tracing::info!("{msg}");
+
+        state.broadcast(addr, &msg).await;
+    }
+
+    Ok(())
+}
 
 
 #[tokio::main]
@@ -206,12 +205,4 @@ async fn main() -> Result<()> {
             }
         });
     }
-}
-
-
-async fn process(state: Arc<Mutex<Shared>>,
-                 stream: TcpStream,
-                 addr: SocketAddr) -> Result<()> {
-    // @todo implement
-    Ok(())
 }
