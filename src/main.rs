@@ -1,208 +1,97 @@
-
-use std::collections::HashMap;
-use std::env;
-use std::io;
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-/*
-use tokio::io::{
-    AsyncReadExt,
-    AsyncWriteExt
+use axum::{
+    extract::{
+        ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade},
+        State,
+    },
+    response::{Html, IntoResponse},
+    routing::get,
+    Router,
 };
+use futures_util::{sink::SinkExt, stream::StreamExt};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, RwLock},
+};
+use tokio::sync::broadcast;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+// user includes
+pub mod state;
+pub mod room;
+pub mod message;
+pub mod config;
+pub mod error;
+pub mod handlers;
+
+use crate::{
+    handlers::websocket::websocket_handler,
+    state::AppState
+};
+
+
+
+
+/* 
+// Our shared state
+struct AppState {
+    // We require unique usernames. This tracks which usernames have been taken.
+    user_set: Mutex<HashSet<String>>,
+    // Channel used to send messages to all connected clients.
+    tx: broadcast::Sender<String>,
+}
 */
-use tokio::net::{
-    TcpListener,
-    TcpStream
-};
-use tokio::sync::{
-    mpsc,
-    Mutex
-};
-use tokio_stream::StreamExt;
-use tokio_util::codec::{
-    Framed,
-    LinesCodec
-};
-use futures::SinkExt;
 
-
-// Typedefs
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-/// Transmission part of the message channel.
-type Tx = mpsc::UnboundedSender<String>;
-/// Receive part of the message channel.
-type Rx = mpsc::UnboundedReceiver<String>;
-
-
-// Constants
-const DEFAULT_ADDR: &str = "127.0.0.1:6142";
-
-
-// Data Structures
-/// Set of Tx handles for all clients. On receive, message is broadcasted to all peers.
-struct Shared {
-    /// Tx handles of connected clients.
-    peers: HashMap<SocketAddr, Tx>,
-}
-
-impl Shared {
-    /// Default constructor.
-    pub fn new() -> Shared {
-        Shared {
-            peers: HashMap::new()
-        }
-    }
-
-    /// Broadcast message to peers with cleanup.
-    async fn broadcast(&mut self,
-                       sender: SocketAddr,
-                       message: &str) {
-        let mut failed_peers = Vec::new();
-        let msg_str = message.to_string();
-
-        // Broadcast message
-        for (addr, tx) in self.peers.iter() {
-            if *addr != sender && tx.send(msg_str.clone()).is_err() {
-                failed_peers.push(*addr);
-            }
-        }
-
-        // Clean up detached peers
-        for addr in failed_peers {
-            self.peers.remove(&addr);
-
-            tracing::debug!("Removed disconnected peer: {addr}");
-        }
-    }
-}
-
-
-/// State of each client.
-struct Peer {
-    /// TCP socket wrapped in lines codec for read/write operations on string data (instead of raw bytes).
-    lines: Framed<TcpStream, LinesCodec>,
-    /// Receive channel.
-    rx: Rx,
-}
-
-impl Peer {
-    /// Constructor.
-    pub async fn new(state: Arc<Mutex<Shared>>,
-                     lines: Framed<TcpStream, LinesCodec>) -> io::Result<Peer> {
-        // client's socket address
-        let addr = lines.get_ref().peer_addr()?;
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        state.lock().await
-             .peers.insert(addr, tx);
-
-        Ok(Peer { lines, rx })
-    }
-}
-
-/// Process individual client
-async fn process(state: Arc<Mutex<Shared>>,
-                 stream: TcpStream,
-                 addr: SocketAddr) -> Result<()> {
-    let mut lines = Framed::new(stream, LinesCodec::new());
-
-    lines.send("Enter your username:").await?;
-
-    let Some(Ok(username)) = lines.next().await else {
-        tracing::error!("Failed to get username from {addr} - client disconnected.");
-
-        return Ok(());
-    };
-
-    let mut peer = Peer::new(state.clone(), lines).await?;
-
-    // Client has connected - notify everybody.
-    {
-        let mut state = state.lock().await;
-        let msg = format!("{username} has joined the chat");
-
-        tracing::info!("{msg}");
-
-        state.broadcast(addr, &msg).await;
-    }
-
-    // Process messages until stream is exhausted
-    loop {
-        tokio::select! {
-            // message was received from a peer, send it to current user.
-            Some(msg) = peer.rx.recv() => {
-                if let Err(e) = peer.lines.send(&msg).await {
-                    tracing::error!("Failed to send message <{msg}> to {username}: {e:?}");
-                    break;
-                }
-            }
-
-            // message received from the current user, broadcast to peers
-            result = peer.lines.next() => match result {
-                Some(Ok(msg)) => {
-                    let mut state = state.lock().await;
-                    let msg = format!("{username}: {msg}");
-
-                    state.broadcast(addr, &msg).await;
-                }
-                Some(Err(e)) => {
-                    tracing::error!("Failed to process message for {username}: {e:?}");
-                    break;
-                }
-                // Stream is exhausted
-                None => break,
-            },
-        }
-    }
-
-    // Client disconnected
-    {
-        let mut state = state.lock().await;
-        state.peers.remove(&addr);
-
-        let msg = format!("{username} has left the chat");
-
-        tracing::info!("{msg}");
-
-        state.broadcast(addr, &msg).await;
-    }
-
-    Ok(())
-}
 
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // logging
-    use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
-    tracing_subscriber::fmt()
-        // Filters debug output based on RUST_LOG env var; currently chat-only (but can be RUST_LOG=tokio=trace)
-        .with_env_filter(EnvFilter::from_default_env().add_directive("chat=info".parse()?))
-        // Log events lifespan (useful with tokio=trace)
-        .with_span_events(FmtSpan::FULL)
-        .init();
+async fn main() {
+    tracing_subscriber_init();
 
-    // Shared state: (held by server task)
-    // new client connects -> state handle is cloned -> state handle passed to processing task
-    let state = Arc::new(Mutex::new(Shared::new()));
+    // Set up application state for use with with_state().
+    //let user_set = Mutex::new(HashSet::new());
+    //let (tx, _rx) = broadcast::channel(100);
 
-    // Start listening
-    let addr = env::args()
-                .nth(1)
-                .unwrap_or_else(|| DEFAULT_ADDR.to_string());
-    let listener = TcpListener::bind(&addr).await?;
+    let app_state = Arc::new(AppState::new());
+    let addr = format!("{}:{}", app_state.config.host, app_state.config.port);
 
-    loop {
-        let (stream, addr) = listener.accept().await?;
-        let state = Arc::clone(&state);
+    let app = Router::new()
+        .route("/", get(index))
+        .route("/websocket", get(websocket_handler))
+        .with_state(app_state);
 
-        tokio::spawn(async move {
-            tracing::debug!("Accepted connection from {addr}");
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .unwrap();
 
-            if let Err(e) = process(state, stream, addr).await {
-                tracing::warn!("Connection from {addr} failed: {e:?}");
-            }
-        });
+    tracing::debug!("listening on {}", listener.local_addr().unwrap());
+    axum::serve(listener, app).await;
+}
+
+
+
+fn check_username(state: &AppState, string: &mut String, name: &str) {
+    let mut user_set = state.user_set.lock().unwrap();
+
+    if !user_set.contains(name) {
+        user_set.insert(name.to_owned());
+
+        string.push_str(name);
     }
+}
+
+// Include utf-8 file at **compile** time.
+async fn index() -> Html<&'static str> {
+    Html(std::include_str!("../html/chat.html"))
+}
+
+
+/// Debug info 
+fn tracing_subscriber_init() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| format!("{}=trace", env!("CARGO_CRATE_NAME")).into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 }
