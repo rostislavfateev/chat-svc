@@ -24,7 +24,10 @@ pub mod error;
 pub mod handlers;
 
 use crate::{
-    handlers::websocket::websocket_handler,
+    handlers::{
+        health::health_handler,
+        websocket::websocket_handler
+    },
     state::AppState
 };
 
@@ -57,6 +60,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         .route("/websocket", get(websocket_handler))
+        .route("/health", get(health_handler))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(addr)
