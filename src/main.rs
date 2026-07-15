@@ -1,3 +1,9 @@
+/// Entry point
+/// - config
+/// - tracing init
+/// - router
+/// - shutdown
+
 use axum::{
     extract::{
         ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade},
@@ -12,7 +18,10 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex, RwLock},
 };
-use tokio::sync::broadcast;
+use tokio::{
+    signal,
+    sync::broadcast
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // user includes
@@ -59,7 +68,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/websocket", get(websocket_handler))
+        .route("/ws", get(websocket_handler))
         .route("/health", get(health_handler))
         .with_state(app_state);
 
@@ -68,20 +77,11 @@ async fn main() {
         .unwrap();
 
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await;
 }
 
-
-
-fn check_username(state: &AppState, string: &mut String, name: &str) {
-    let mut user_set = state.user_set.lock().unwrap();
-
-    if !user_set.contains(name) {
-        user_set.insert(name.to_owned());
-
-        string.push_str(name);
-    }
-}
 
 // Include utf-8 file at **compile** time.
 async fn index() -> Html<&'static str> {
@@ -90,7 +90,7 @@ async fn index() -> Html<&'static str> {
 
 
 /// Debug info 
-fn tracing_subscriber_init() {
+async fn tracing_subscriber_init() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -98,4 +98,29 @@ fn tracing_subscriber_init() {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+}
+
+/// Graceful shutdown
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
