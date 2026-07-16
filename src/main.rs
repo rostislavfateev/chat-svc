@@ -27,16 +27,18 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 // user includes
 pub mod state;
 pub mod room;
-pub mod message;
+pub mod peer;
 pub mod config;
 pub mod error;
-pub mod handlers;
+pub mod ws;
+pub mod observability;
+pub mod persistence;
 
 use crate::{
-    handlers::{
-        health::health_handler,
-        websocket::websocket_handler
+    ws::{
+        connection::websocket_handler
     },
+    observability::health_handler,
     state::AppState
 };
 
@@ -58,10 +60,6 @@ struct AppState {
 #[tokio::main]
 async fn main() {
     tracing_subscriber_init();
-
-    // Set up application state for use with with_state().
-    //let user_set = Mutex::new(HashSet::new());
-    //let (tx, _rx) = broadcast::channel(100);
 
     let app_state = Arc::new(AppState::new());
     let addr = format!("{}:{}", app_state.config.host, app_state.config.port);

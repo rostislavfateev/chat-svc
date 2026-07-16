@@ -1,53 +1,33 @@
-///
+/// State shared accross all handlers
 
 // includes
 // standard
-use std::collections::{
-    HashMap,
-    VecDeque
-};
 use std::sync::{
-    atomic::AtomicUsize,
-    Arc,
-    RwLock
+        atomic::AtomicUsize,
+        Arc
 };
 use std::time::Instant;
-use tokio::sync::broadcast;
+use dashmap::DashMap;
 
+use crate::peer::PeerHndl;
 // user
 use crate::{
     config::AppConfig,
-    message::ServerMsg
+    error::Result,
+    room::Room
 };
 
 
 /// Room state representation.
-pub struct RoomState {
-    /// Broadcast channel.
-    pub tx:             broadcast::Sender<ServerMsg>,
-    /// Chat history.
-    pub history:        VecDeque<ServerMsg>,
-    /// Number of clients connected.
-    pub client_cnt:     usize,
-}
 
-impl RoomState {
-    pub fn new(cfg: &AppConfig) -> RoomState {
-        RoomState {
-            tx:         broadcast::Sender::new(cfg.max_clients),
-            history:    VecDeque::new(),//.reserve(cfg.history_size),
-            client_cnt: cfg.max_clients,
-        }
-
-    }
-
-}
 
 
 /// Application State representation.
 pub struct AppState {
     /// Available rooms to join.
-    pub rooms:          Arc<RwLock<HashMap<String, RoomState>>>,
+    pub rooms:          Arc<DashMap<String, Room>>,
+    /// App users.
+    pub users:          Arc<DashMap<String, Arc<PeerHndl>>>,
     /// Number of clients connected.
     pub total_clients:  Arc<AtomicUsize>,
     /// App start time.
@@ -58,16 +38,38 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> AppState {
+        let cfg = AppConfig::new();
         AppState {
-            rooms:          Arc::new(RwLock::new(HashMap::new())),
+            rooms:          Arc::new(DashMap::with_capacity(cfg.max_rooms)),
+            users:          Arc::new(DashMap::with_capacity(cfg.max_room_clients)),
             total_clients:  Arc::new(AtomicUsize::new(0)),
             started_at:     Instant::now(),
-            config:         Arc::new(AppConfig::new())
+            config:         Arc::new(cfg)
         }
     }
 
-    pub fn add_room() {
-        // @todo implement
+    /// Add new room
+    pub async fn add_room(&mut self, name: &str) -> Result<()> {
+        if !self.rooms.contains_key(name) {
+            self.rooms.insert(name.to_string(), Room::new(&self.config));
+        }
+        Ok(())
     }
 
+    /*
+    pub async fn cleanup(&mut self) {
+        let rooms = Arc::clone(&self.rooms);
+
+        tokio::spawn( async move {
+
+            // @todo better way than saving keys
+            for pair in rooms.iter_mut() {
+                if pair.value().client_cnt == 0 {
+                    rooms.remove(pair.key());
+                }
+            }
+
+        });
+    }
+     */
 }
