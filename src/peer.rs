@@ -1,28 +1,24 @@
+/*
+use axum::extract::ws::WebSocket; //{Message, Utf8Bytes,
+use futures_util::stream::SplitStream;
+/// Single client connection representation
+use uuid::Uuid;
+//pub struct SplitStream<S>(BiLock<S>)
 
-
-pub enum PeerId {
-    Uuid(x)
-}
 
 pub struct PeerHndl {
-    /// The TCP socket wrapped with the `Lines` codec, defined below.
-    lines: Framed<TcpStream, LinesCodec>,
-
-    /// Receive half of the message channel.
-    rx: Rx,
+    id: Uuid,
+    name: String,
+    receiver: SplitStream<WebSocket>,
 }
 
 impl PeerHndl {
-    pub fn new(
-        state: Arc<Mutex<Shared>>,
-        lines: Framed<TcpStream, LinesCodec>
-    ) -> PeerHndl {
-        let addr = lines.get_ref().peer_addr()?;
-
-        let (tx, rx) = mpsc::channel();
-
-        state.lock().await.peers.insert(addr, tx);
-
-        Ok( PeerHndl { lines, rx } )
+    pub fn new(name: String, receiver: SplitStream<WebSocket>) -> PeerHndl {
+        PeerHndl {
+            id: Uuid::new_v4(),
+            name,
+            receiver,
+        }
     }
 }
+ */

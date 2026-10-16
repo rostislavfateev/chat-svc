@@ -1,39 +1,24 @@
-/// WebSocket connections handling.
-
-use uuid::Uuid;
-use std::{
-    sync::Arc,
-    time::Instant
-};
 use axum::{
     extract::{
-        ws::{
-            WebSocket,
-            WebSocketUpgrade
-        },
-        State
+        State,
+        ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade},
     },
-    response::IntoResponse
+    response::IntoResponse,
 };
+use futures_util::{
+    sink::SinkExt,
+    stream::StreamExt //{SplitSink, SplitStream, StreamExt},
+};
+/// WebSocket connections handling.
+use std::sync::Arc;
 
+// User modules
 use crate::state::AppState;
 
-struct ConnectionState {
-    client_id:      Uuid,
-    username:       String,
-    current_room:   String,
-    msg_count:      u32,
-    window_start:   Instant,
-}
-
-impl ConnectionState {
-
-}
-
-
-pub async fn websocket_handler(ws: WebSocketUpgrade,
-                               State(state): State<Arc<AppState>>)
-    -> impl IntoResponse {
+pub async fn websocket_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
     ws.on_upgrade(|socket| websocket(socket, state))
 }
 
@@ -44,16 +29,15 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
     // By splitting, we can send and receive at the same time.
     let (mut sender, mut receiver) = stream.split();
 
+    // @todo move to a separate function
     // Username gets set in the receive loop, if it's valid.
     let mut username = String::new();
     // Loop until a text message is found.
     while let Some(Ok(message)) = receiver.next().await {
         if let Message::Text(name) = message {
             // If username that is sent by client is not taken, fill username string.
-            check_username(&state, &mut username, name.as_str());
-
-            // If not empty we want to quit the loop else we want to quit function.
-            if !username.is_empty() {
+            if let Some(name) = state.register_username(name.as_str()) {
+                username = name;
                 break;
             } else {
                 // Only send our client that username is taken.
@@ -79,7 +63,7 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
 
     // Spawn the first task that will receive broadcast messages and send text
     // messages over the websocket to our client.
-    let mut send_task = tokio::spawn(async move {
+    let mut send_to_cli_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             // In any websocket error, break loop.
             if sender.send(Message::text(msg)).await.is_err() {
@@ -94,7 +78,7 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
 
     // Spawn a task that takes messages from the websocket, prepends the user
     // name, and sends them to all broadcast subscribers.
-    let mut recv_task = tokio::spawn(async move {
+    let mut recv_from_cli_task = tokio::spawn(async move {
         while let Some(Ok(Message::Text(text))) = receiver.next().await {
             // Add username before message.
             let _ = tx.send(format!("{name}: {text}"));
@@ -103,8 +87,8 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
 
     // If any one of the tasks run to completion, we abort the other.
     tokio::select! {
-        _ = &mut send_task => recv_task.abort(),
-        _ = &mut recv_task => send_task.abort(),
+        _ = &mut send_to_cli_task => recv_from_cli_task.abort(),
+        _ = &mut recv_from_cli_task => send_to_cli_task.abort(),
     };
 
     // Send "user left" message (similar to "joined" above).
@@ -113,5 +97,5 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
     let _ = state.tx.send(msg);
 
     // Remove username from map so new clients can take it again.
-    state.user_set.lock().unwrap().remove(&username);
+    state.remove_username(&username);
 }

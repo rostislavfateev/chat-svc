@@ -1,0 +1,5 @@
+flowchart LR
+    subgraph Room
+        UI[Room]
+    end
+    App --> Room
