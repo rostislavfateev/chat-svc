@@ -1,5 +1,5 @@
 [package]
-name = "chat-svc"
+name = "chatsvc"
 version = "0.1.0"
 edition = "2024"
 
@@ -23,3 +23,4 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 
 [dev-dependencies]
 tokio-tungstenite = "0.21"
+reqwest = "0.12"
