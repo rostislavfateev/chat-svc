@@ -1,5 +1,5 @@
 //! src/lib.rs
-//! 
+//!
 
 use axum::{Router, response::Html, routing::get};
 
@@ -16,7 +16,6 @@ pub mod ws;
 use crate::config::AppConfig;
 use crate::state::AppState;
 use crate::ws::connection::websocket_handler;
-
 
 /// Initialize the global tracing subscriber. Call once, from `main`.
 pub fn init_tracing() {
@@ -48,7 +47,6 @@ pub async fn run(listener: TcpListener, app_cfg: AppConfig) -> std::io::Result<(
         .with_graceful_shutdown(shutdown_signal())
         .await
 }
-
 
 // Standard Handlers
 /// Serves the chat page.

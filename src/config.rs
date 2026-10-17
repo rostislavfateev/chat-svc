@@ -29,42 +29,26 @@ impl AppConfig {
         dotenvy::dotenv().ok();
 
         AppConfig {
-            host: env::var("HOST")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or("127.0.0.1".to_string()),
-            port: env::var("PORT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(3000),
-            max_rooms: env::var("ROOMS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(50),
-            history_size: env::var("HISTORY")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(100),
-            max_room_clients: env::var("CLIENTS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(50),
-            heartbeat_s: env::var("HEART")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(30),
-            msg_rate_limit: env::var("MSG_RATE")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10),
-            window_rate_limit_s: env::var("WINDOW_RATE")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(1),
-            max_msg_len: env::var("MSG_LEN")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(2048),
+            host: register_env_var("HOST", "127.0.0.1".to_string()),
+            port: register_env_var("PORT", 3000),
+            max_rooms: register_env_var("ROOMS", 50),
+            history_size: register_env_var("HISTORY", 100),
+            max_room_clients: register_env_var("CLIENTS", 50),
+            heartbeat_s: register_env_var("HEART", 30),
+            msg_rate_limit: register_env_var("MSG_RATE", 10),
+            window_rate_limit_s: register_env_var("WINDOW_RATE", 1),
+            max_msg_len: register_env_var("MSG_LEN", 2048),
         }
     }
+}
+
+/// Process environmental variable for application config member.
+fn register_env_var<T>(env_name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+{
+    env::var(env_name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
